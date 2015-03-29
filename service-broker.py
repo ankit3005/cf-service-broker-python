@@ -5,7 +5,7 @@ import os
 
 # constant representing the API version supported
 # keys off HEADER X-Broker-Api-Version from Cloud Controller
-X_BROKER_API_VERSION = 2.3
+X_BROKER_API_VERSION = 2.4
 X_BROKER_API_VERSION_NAME = 'X-Broker-Api-Version'
 
 # UPDATE THIS FOR YOUR ECHO SERVICE DEPLOYMENT
@@ -43,7 +43,9 @@ def error(error):
     return '{"error": "%s"}' % error.body
 
 def authenticate(username, password):
-    return True
+    if (username == 'demouser' and password == 'demopassword') :
+        return True
+    return False
 
 @bottle.route('/v2/catalog', method='GET')
 @bottle.auth_basic(authenticate)
@@ -197,5 +199,7 @@ def unbind(instance_id, binding_id):
     return {}
 
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', '8080'))
-    bottle.run(host='0.0.0.0', port=port, debug=True, reloader=False)
+    port = int(os.getenv('VCAP_APP_PORT', '8080'))
+    #appInfo = os.getenv('VCAP_APPLICATION') # contains application info
+    host = os.getenv('VCAP_APP_HOST', '0.0.0.0') # contains host name
+    bottle.run(host=host, port=port, debug=True, reloader=False)
