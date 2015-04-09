@@ -65,7 +65,8 @@ def catalog():
     """
     api_version = bottle.request.headers.get('X-Broker-Api-Version')
     if not api_version or float(api_version) < X_BROKER_API_VERSION:
-        bottle.abort(409, "Missing or incompatible %s. Expecting version %0.1f or later" % (X_BROKER_API_VERSION_NAME, X_BROKER_API_VERSION))
+        #bottle.abort(409, "Missing or incompatible %s. Expecting version %0.1f or later" % (X_BROKER_API_VERSION_NAME, X_BROKER_API_VERSION))
+        print("INFO: Missing or incompatible %s. Expecting version %0.1f or later" % (X_BROKER_API_VERSION_NAME, X_BROKER_API_VERSION))
     return {"services": [echo_service, invert_service]}
 
 
