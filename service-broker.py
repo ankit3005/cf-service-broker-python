@@ -304,10 +304,8 @@ if __name__ == '__main__':
 
             })
 
-    #aws_access_key_id = os.getenv('AWS_ACCESS_KEY_ID') # 'AKIAJP75WE6FVSE2DYNA'
-    #aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')#'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'
-    aws_access_key_id = 'AKIAJP75WE6FVSE2DYNA'
-    aws_secret_access_key = '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'
+    aws_access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
+    aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')
 
     port = int(os.getenv('VCAP_APP_PORT', '8080'))
     #appInfo = os.getenv('VCAP_APPLICATION') # contains application info
