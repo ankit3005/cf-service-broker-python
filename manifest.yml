@@ -1,4 +1,4 @@
 applications:
-- name: service-broker
+- name: dynamodb-broker
   mem: 64M
   disk: 512M

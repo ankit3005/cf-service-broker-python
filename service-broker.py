@@ -2,6 +2,13 @@ import bottle
 import requests
 import json
 import os
+import boto
+from boto.dynamodb2.table import Table
+from boto.dynamodb2.types import NUMBER
+from boto.dynamodb2.fields import (HashKey, RangeKey,
+                                   AllIndex, KeysOnlyIndex, IncludeIndex,
+                                   GlobalAllIndex, GlobalKeysOnlyIndex,
+                                   GlobalIncludeIndex)
 
 # constant representing the API version supported
 # keys off HEADER X-Broker-Api-Version from Cloud Controller
@@ -9,31 +16,55 @@ X_BROKER_API_VERSION = 2.4
 X_BROKER_API_VERSION_NAME = 'X-Broker-Api-Version'
 
 # UPDATE THIS FOR YOUR ECHO SERVICE DEPLOYMENT
-service_base = "localhost"  # echo-service.stackato.danielwatrous.com
+# service_base = "localhost"  # echo-service.stackato.danielwatrous.com
 
 # service endpoint templates
-service_instance = "http://"+service_base+"/echo/{{instance_id}}"
-service_binding = "http://"+service_base+"/echo/{{instance_id}}/{{binding_id}}"
-service_dashboard = "http://"+service_base+"/echo/dashboard/{{instance_id}}"
+# service_instance = "http://"+service_base+"/echo/{{instance_id}}"
+# service_binding = "http://"+service_base+"/echo/{{instance_id}}/{{binding_id}}"
+# service_dashboard = "http://"+service_base+"/echo/dashboard/{{instance_id}}"
 
 # plans
-big_plan = {
-          "id": "big_0001",
-          "name": "large",
-          "description": "A large dedicated service with a big storage quota, lots of RAM, and many connections",
-          "free": False
-        }
+# --------------
+# big_plan = {
+#           "id": "big_0001",
+#           "name": "large",
+#           "description": "A large dedicated service with a big storage quota, lots of RAM, and many connections",
+#           "free": False
+#         }
+# 
+# small_plan = {
+#           "id": "small_0001",
+#           "name": "small",
+#           "description": "A small shared service with a small storage quota and few connections"
+#         }
+dynamo_plans = []
 
-small_plan = {
-          "id": "small_0001",
-          "name": "small",
-          "description": "A small shared service with a small storage quota and few connections"
-        }
+dynamo_service_dashboard = "https://{{region}}.console.aws.amazon.com/dynamodb/home?region={{region}}#"
+
+regions_list = [
+       ("us-east-1", "US East (N. Virginia)"),
+       ("us-west-2", "US West (Oregon)"),
+       ("us-west-1", "US West (N. California)"),
+       ("eu-west-1", "EU (Ireland)"),         
+       ("eu-central-1", "EU (Frankfurt)"),
+       ("ap-southeast-1","Asia Pacific (Singapore)"),
+       ("ap-southeast-2", "Asia Pacific (Sydney)"),
+       ("ap-northeast-1", "Asia Pacific (Tokyo)"),
+       ("sa-east-1", "South America (Sao Paulo)")
+        ]
+
 
 # services
-echo_service = {'id': 'echo_service', 'name': 'Echo Service', 'description': 'Echo back the value received', 'bindable': True, 'plans': [big_plan]}
+# --------------
+# big_plan = {
+# echo_service = {'id': 'echo_service', 'name': 'Echo Service', 'description': 'Echo back the value received', 'bindable': True, 'plans': [big_plan]}
+# invert_service = {'id': 'invert_service', 'name': 'Invert Service', 'description': 'Invert the value received', 'bindable': True, 'plans': [small_plan]}
+dynamodb_service = {'id': 'dynamodb_service', 'name': 'DynamoDB', 'description': 'AWS DynamoDB instances', 'bindable': True, 'plans': dynamo_plans}
 
-invert_service = {'id': 'invert_service', 'name': 'Invert Service', 'description': 'Invert the value received', 'bindable': True, 'plans': [small_plan]}
+
+# mapping between service instance_id  and provison_details
+broker_map = {}
+binding_map = {}
 
 
 @bottle.error(401)
@@ -67,7 +98,7 @@ def catalog():
     if not api_version or float(api_version) < X_BROKER_API_VERSION:
         #bottle.abort(409, "Missing or incompatible %s. Expecting version %0.1f or later" % (X_BROKER_API_VERSION_NAME, X_BROKER_API_VERSION))
         print("INFO: Missing or incompatible %s. Expecting version %0.1f or later" % (X_BROKER_API_VERSION_NAME, X_BROKER_API_VERSION))
-    return {"services": [echo_service, invert_service]}
+    return {"services": [dynamodb_service]}
 
 
 @bottle.route('/v2/service_instances/<instance_id>', method='PUT')
@@ -94,22 +125,46 @@ def provision(instance_id):
         JSON document with details about the
         services offered through this broker
     """
+
     if bottle.request.content_type != 'application/json':
         bottle.abort(415, 'Unsupported Content-Type: expecting application/json')
     # get the JSON document in the BODY
     provision_details = bottle.request.json
-    # provision the service
-    provision_result = requests.put(bottle.template(service_instance, instance_id=instance_id))
-    # TODO: it may make sense for the broker to associate the new instance with service/plan/org/space
-    # check for case of already provisioned service
-    if provision_result.status_code == 409:
-        # in this case return empty document with 200
-        # in cases where the service must be provisioned uniquely, pass along the 409
+
+    print("Provision details:")
+    print("-----------------------")
+    print(provision_details)
+
+    if instance_id in broker_map:
+        # already provisioned earlier
+        print(" already provisioned earlier")
+        bottle.response.status = 409
         return {}
-    if provision_result.status_code == 200:
-        # return created status code
+
+    region = provision_details["plan_id"][:-5]
+    count = 0
+    for item in regions_list:
+        if item[0] != region:
+            count = count + 1
+    if count == 9:
+        # region in request is not valid
+        print("Invalid region specified")
+        bottle.response.status = 409
+        return {"description": "Invalid region specified"}
+
+    try:
+        connection = boto.dynamodb2.connect_to_region(region, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
+        broker_map[instance_id] = provision_details
+    except Exception as e: 
+        print("aws_access_key_id: " + aws_access_key_id)
+        print("aws_secret_access_key: " + aws_secret_access_key)
+        print("region " + region)
+        print("Exception in provision: " + e)
+        bottle.response.status = 409
+        return {}
+    else:
         bottle.response.status = 201
-        return {"dashboard_url": bottle.template(service_dashboard, instance_id=instance_id)}
+        return {"dashboard_url": bottle.template(dynamo_service_dashboard, region=region)}
 
 @bottle.route('/v2/service_instances/<instance_id>', method='DELETE')
 @bottle.auth_basic(authenticate)
@@ -125,13 +180,17 @@ def deprovision(instance_id):
         As of API 2.3, an empty JSON document
         is expected
     """
+
     # deprovision service
-    deprovision_result = requests.delete(bottle.template(service_instance, instance_id=instance_id))
-    # check for case of no existing service
-    if deprovision_result.status_code == 404:
+    if instance_id not in broker_map:
+        # already deleted
         bottle.response.status = 410
-    # send response
-    return {}
+        return {}
+    else:
+        # remove instance_id to provision_details mapping
+        del broker_map[instance_id]
+        # send response
+        bottle.response.status = 200
 
 @bottle.route('/v2/service_instances/<instance_id>/service_bindings/<binding_id>', method='PUT')
 @bottle.auth_basic(authenticate)
@@ -158,21 +217,53 @@ def bind(instance_id, binding_id):
         for the service based on this binding
         http://docs.cloudfoundry.org/services/binding-credentials.html
     """
+
+    """
+    Response body will be of form -
+    {
+      "credentials": {
+            "aws_access_key_id": <aws_access_key_id>,
+            "aws_secret_access_key": <aws_secret_access_key>,
+            "region" : <region>
+      }
+    }
+    """
     if bottle.request.content_type != 'application/json':
         bottle.abort(415, 'Unsupported Content-Type: expecting application/json')
     # get the JSON document in the BODY
     binding_details = bottle.request.json
-    # bind the service
-    binding_result = requests.put(bottle.template(service_binding, instance_id=instance_id, binding_id=binding_id))
-    # TODO: it may make sense for the broker to associate the new instance with service/plan/app
-    # check for case of already provisioned service
-    if binding_result.status_code == 409:
-        bottle.response.status = 409
-        return {}
-    if binding_result.status_code == 200:
-        # return created status code
-        bottle.response.status = 201
-        return {"credentials": {"uri": bottle.template(service_binding, instance_id=instance_id, binding_id=binding_id)}}
+
+    print("Binding details:")
+    print("-----------------------")
+    print(binding_details)
+
+    req_plan_id = binding_details["plan_id"]
+    app_guid = binding_details["app_guid"]
+    plan_id = binding_details["plan_id"]
+
+    if binding_id in binding_map:
+        if binding_map[binding_id] == req_plan_id + app_guid:
+            #already bound this service plan to this app 
+            bottle.response.status = 200
+            return {}
+        else:
+            #bound some different instance with this binding_id already
+            bottle.response.status = 409
+            return {}
+
+    # add an entry in binding_map
+    binding_map[binding_id] = req_plan_id + app_guid
+   
+    # populate the credentials dict to return
+    credentials = {
+            "aws_access_key_id": aws_access_key_id,
+            "aws_secret_access_key": aws_secret_access_key,
+            "region" : plan_id[:-5]
+            }
+
+    # return credentials with code 201
+    bottle.response.status = 201
+    return {"credentials": credentials}
 
 @bottle.route('/v2/service_instances/<instance_id>/service_bindings/<binding_id>', method='DELETE')
 @bottle.auth_basic(authenticate)
@@ -191,15 +282,33 @@ def unbind(instance_id, binding_id):
         As of API 2.3, an empty JSON document
         is expected
     """
-    # unbind the service
-    unbinding_result = requests.delete(bottle.template(service_binding, instance_id=instance_id, binding_id=binding_id))
+
     # check for case of no existing service
-    if unbinding_result.status_code == 404:
+    if binding_id not in binding_map:
+        # already deleted
         bottle.response.status = 410
+    else:
+        del binding_map[binding_id]
+        bottle.response.status = 200
+
     # send response
     return {}
 
 if __name__ == '__main__':
+    for region in regions_list:
+        dynamo_plans.append(
+            {
+              "id": region[0] + "_0001",
+              "name": region[0],
+              "description": "AWS Region: " + region[1],
+
+            })
+
+    #aws_access_key_id = os.getenv('AWS_ACCESS_KEY_ID') # 'AKIAJP75WE6FVSE2DYNA'
+    #aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')#'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'
+    aws_access_key_id = 'AKIAJP75WE6FVSE2DYNA'
+    aws_secret_access_key = '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'
+
     port = int(os.getenv('VCAP_APP_PORT', '8080'))
     #appInfo = os.getenv('VCAP_APPLICATION') # contains application info
     host = os.getenv('VCAP_APP_HOST', '0.0.0.0') # contains host name
